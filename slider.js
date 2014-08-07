@@ -1,6 +1,118 @@
+    var utility = {
+	'articleTitle':'',
+	'apiUrl':'https://en.wikipedia.org/w/api.php?callback=?',
+	'revisionUrl' : 'https://en.wikipedia.org/w/index.php?oldid=',
+	'redirectTitle' : function(title){
+		var check_redirect_dict = {
+			'action':'query',
+			'format':'json',
+			'titles':title,
+			'redirects':''
+		};
+		var that = this;
+		return $.getJSON(that.apiUrl,check_redirect_dict,function(data){
+			if (-1 in data['query']['pages']){
+				that.articleTitle = false;
+			}
+			else{
+				query = data['query'];	
+				if ('redirects' in query){
+					console.log(query['redirects'][0]['to']);
+					that.articleTitle = query['redirects'][0]['to'];
+				}
+				else
+					that.articleTitle = title;
+			}
+		});
+	},
+	'searchTitle' : function(parent, string){
+		var that = this;
+		var search_dict = {
+			'action':'opensearch',
+			'format':'json',
+			'search':string,
+			'namespace':0,
+			'suggest':'',
+			'limit':5
+		};
+		$.getJSON(that.apiUrl,search_dict,function(data){
+			$('.suggestionDropdown').attr('data-length',data[1].length);
+			console.log(data);
+			$(parent + ' .suggestionDropdown li').each(function(index){
+				if (data[1][index]){
+					$(this).text(data[1][index]);
+				}
+				else{
+					$(this).text('');
+				}
+			});
+		});
+	},
+	'languageDropdown': function(parent,languages){
+		var dropdown = $(parent + ' .languageDropdown ul');
+		var count = 0;
+		for (language in languages){
+			if( count % 6 == 0 ){
+				var subList = $('<li><ul></ul></li>');
+				dropdown.append(subList);
+				var subList = subList.find('ul');
+			}
+			var li = $('<li></li>').text(languages[language]).attr('data-language',language);
+			subList.append(li);
+			count ++ ;
+		}
+	},
+	'changeUrlLanguage': function(language){
+		this.apiUrl = 'https://'+language+'.wikipedia.org/w/api.php?callback=?';
+		this.revisionUrl = 'https://'+language+'.wikipedia.org/w/index.php?oldid=';
+	},
+	'translate': function(language){
+		language = translation[language] ? language : 'en';
+		translations = translation[language];
+		$('[data-translate]').each(function(index){
+			element = $(this);
+			if (element.prop('tagName') == 'INPUT'){
+				if (element.attr('value')){
+					element.attr('value',translations[element.attr('data-translate')]);
+				}
+				else{
+					element.attr('placeholder',translations[element.attr('data-translate')]);
+				}
+			}
+			else if (element.attr('data-title')){
+				element.attr('data-title',translations[element.attr('data-translate')]);
+			}
+			else{
+				element.text(translations[element.attr('data-translate')]);
+			}
+		});
+	}
+};
+
+var infoBox = function (revInfo){
+        for (key in revInfo){                   
+            if(key == 'revid'){
+                var urlBase = utility.revisionUrl+revInfo[key];
+                var anchor =$('<a>'+revInfo[key]+'</a>').attr({'target':'_blank','href':urlBase});
+                 $('#infoBox .revisionLink').html(anchor);
+            }
+            else if(key == 'timestamp'){
+            	$('#infoBox .editDate').html(revInfo[key]);
+            }
+            else if(key == 'user'){
+            	$('#infoBox .userName').html(revInfo[key]);
+            }
+            else{
+            	var minor = revInfo[key]?revInfo[key]:'';
+                $('#infoBox .minor').html(minor);
+               	
+            }
+        }
+	};
+	
+	
     function wikiSlider(options){
     	
-		var url = 'https://en.wikipedia.org/w/api.php?callback=?';
 	    var postDict ={
 		        rvdir:'older',
 		        format:'json',
@@ -33,24 +145,45 @@
 		var rvContinueHash = true,gettingDataFlag = true;
 		var yscale = null, yscale2 = null, xscale = null;
 		var brush = null;
+		var peg = null,pegScale = null,pegHandle,pegHandleContainer;
 		var toolTipDiv, svg, svgBox, svgEnlargedBox;
-		var primaryContainer, primaryGraph, secondaryContainer, secondaryGraph;
-		var outerLength = 50, enlargedLength = 80;
+		var primaryContainer, primaryGraph, secondaryContainer, secondaryGraph, newGraph;
+		var outerLength = 25, enlargedLength = 65;
 		var endLine, startDate, endDate;
+		var progressBar,progressBarWidth = 5;
 		var bars;
 		var timeFormat = "%Y-%m-%dT%H:%M:%SZ";
         var timeParse = d3.time.format(timeFormat);
+        
+        /* Selected Edits*/
+		this.selectedEdits = [];
+		this.pegMoved = true;
 		var that = this;
+		
+		var outerScrollDateUpdate = function (){
+    		var barGraphBarGap = 1;
+    		var outerWidth = $('#outer').width();
+    		var outerViewportHidden = $('#outer').eq(0).scrollLeft();
+    		var outerViewportStart = outerViewportHidden/(that.barGraphBarwidth + barGraphBarGap);
+    		var outerViewportEnd = (outerViewportHidden + outerWidth)/(that.barGraphBarwidth + barGraphBarGap);
+    		var outerViewportShown =  completeRevData.slice(outerViewportStart,outerViewportEnd);
+    		$('#outerEndDate').html(timeParse.parse(outerViewportShown[0].timestamp).toDateString().slice(4));
+    		$('#outerStartDate').html(timeParse.parse(outerViewportShown[outerViewportShown.length -1].timestamp).toDateString().slice(4));
+    		console.log('outer scroll');
+    	};
+    	
 		this.init = function(){
 			/*Enlarged view toggle*/
         	d3.select('.enlargedButton').on('click',function(){
 	            if (d3.select('#enlarged').style('height').split('px')[0] > 20){
 	                d3.select('#enlarged').style({'height':'15px','top':'145px'}).select('svg').style('display','none');
-	                d3.select(this).text('^');
+	                d3.select(this).classed('up',false);
+	                d3.select(this).classed('down',true);
 	            }
 	            else{
 	                d3.select('#enlarged').style({'height':enlargedLength*2+'px', top:0+'px'}).select('svg').style('display','block');
-	                d3.select(this).text('v');
+	                d3.select(this).classed('down',false);
+	                d3.select(this).classed('up',true);
 	            }
 	            });
         
@@ -58,23 +191,40 @@
         	tooltipDiv = d3.select("body").append("div").attr("class", "tooltip").style("opacity", 0);
         	
         	
-        	svg = d3.select('#outer').append('svg').attr({'height':100,'width':600});
+        	svg = d3.select('#outer').append('svg').attr({'height':outerLength*2,'width':600});
             svgBox = svg.append('g').attr({'transform':'translate(0,0)'});
-            svgEnlargedBox = d3.select('#enlarged').append('svg').attr({'height':enlargedLength*2,'width':450})
-                                            .append('g').attr('transform','translate(0,0)');
-        
+            svgEnlarged = d3.select('#enlarged').append('svg').attr({'height':enlargedLength*2,'width':450});
+            /*Baseline in enlarged graph*/
+        	d3.select('#enlarged svg').append('line').attr({'x1':0,'x2':450,
+        													'y1':enlargedLength+progressBarWidth/2,'y2':enlargedLength+progressBarWidth/2,
+        													'stroke':'#d0eeed',
+        													'stroke-width':progressBarWidth});
+        	progressBar =  d3.select('#enlarged svg').append('line').attr({'x1':0,'x2':450,
+        													'y1':enlargedLength+progressBarWidth/2,'y2':enlargedLength+progressBarWidth/2,
+        													'stroke':'#1ebce2',
+        													'stroke-width':0});
+        	
+			d3.select('#enlarged svg').append('line').attr({'x1':0,'x2':0,
+															'y1':10,'y2':enlargedLength+progressBarWidth/2,
+															'stroke':'gray',
+															'stroke-width':'.5'});
+			endLine = d3.select('#enlarged svg').append('line').attr({'x1':450,'x2':450,
+																	'y1':10,'y2':enlargedLength+progressBarWidth/2,
+																	'stroke':'gray',
+																	'stroke-width':'.5'});
+			svgEnlargedBox = svgEnlarged.append('g').attr('transform','translate(0,0)');
+			
 	        primaryContainer = svgBox.append('g').attr('id','primaryContainer');
 	        primaryGraph = primaryContainer.append('g').attr('id','primaryGraph');
-	        primaryContainer.append('text').text('Edit Size').attr({'x':10,'y':10,'class':'legendText'});
+	        //Commenting out Edit size
+	        //primaryContainer.append('text').text('Edit Size').attr({'x':10,'y':10,'class':'legendText'});
 	        secondaryContainer = svgEnlargedBox.append('g').attr({'id':'secondaryContainer'});
 	        secondaryGraph = secondaryContainer.append('g').attr('id','secondaryGraph');
 	        
-        	/*Baseline in enlarged graph*/
-        	d3.select('#enlarged svg').append('line').attr({'x1':0,'x2':450,'y1':enlargedLength,'y2':enlargedLength,'stroke':'gray','stroke-width':'.5'});
-			d3.select('#enlarged svg').append('line').attr({'x1':0,'x2':0,'y1':enlargedLength,'y2':enlargedLength*2-10,'stroke':'gray','stroke-width':'.5'});
-			endLine = d3.select('#enlarged svg').append('line').attr({'x1':450,'x2':450,'y1':enlargedLength,'y2':enlargedLength*2-10,'stroke':'gray','stroke-width':'.5'});
-        	startDate = secondaryContainer.append('text').attr({'x':0,'y':enlargedLength*2-10}).style('font-size',9);
-			endDate = secondaryContainer.append('text').attr({'x':450,'y':enlargedLength*2-10}).style('font-size',9);
+        	
+        	startDate = secondaryContainer.append('text').attr({'x':0,'y':15}).style('font-size',9);
+			endDate = secondaryContainer.append('text').attr({'x':450,'y':15}).style('font-size',9);
+			$('#outer').scroll(outerScrollDateUpdate);
 			
 			/* Calling it direcly with getData by the user*/
         	//this.getData();
@@ -86,7 +236,7 @@
 			}
 			if (gettingDataFlag && rvContinueHash){
 				//console.log('postDict',postDict);
-        		$.getJSON(url,postDict,function(data){
+        		$.getJSON(utility.apiUrl,postDict,function(data){
             		if ('query-continue' in data){
                     	rvContinueHash = data['query-continue'].revisions.rvcontinue;
                     	postDict['rvcontinue'] = rvContinueHash;
@@ -95,6 +245,7 @@
                     	rvContinueHash = null;
             		}
 	            console.log(rvContinueHash);
+	            if (!rvContinueHash) $('#olderEditsInfo').hide();
 	            var resultKey = Object.keys(data.query.pages);
 	            var revData = data.query.pages[resultKey].revisions;
 	            completeRevData = completeRevData.concat(revData);
@@ -103,6 +254,9 @@
 	            that.addData(primaryGraph,completeRevData,yscale);
 	            that.callBrush();
 	            gettingDataFlag = true;
+	            $('#outer').scroll();
+        		}).error(function() { 
+        			gettingDataFlag = true; 
         		});
         		gettingDataFlag = false;
         	}	
@@ -124,34 +278,34 @@
 		        rvlimit:'max',
 	    	};
 		};
-		
+		//Cleanup big time
+		/** To highlight the revision currently being animated **/
+		this.modifySecondryGraph = function(field,value) {
+			newGraph.filter(function(d){
+				if(d[field] == value){
+					progressBar.attr('x1',d.lastX);
+					pegHandleContainer.transition().duration(750).call(peg.extent([d.lastX, d.lastX])).call(peg.event);
+					return true;
+				}
+			});
+		};
 		//Cleanup big time
 		/** To get the list of revisions selected in the slider **/
 		this.getSelection = function () {
 			var brushExtent = brush.extent();
-			var start = Math.floor(brushExtent[0]/that.barGraphBarwidth);
-			var end = Math.ceil(brushExtent[1]/that.barGraphBarwidth);
+			var start = Math.floor(brushExtent[0]/(that.barGraphBarwidth+1));
+			var end = Math.ceil(brushExtent[1]/(that.barGraphBarwidth+1));
 			return completeRevData.slice(start,end);
 		};
 		this.getSecondrySliderSelection = function (i){
-			return secondrySliderSelection;
-		};
-		this.wikiNameSpace = function (language) {
-	  		usingLanguageNamespace = language;
-	  		baseUrl = 'https://'+language+'.wikipedia.org/w/api.php?callback=?';
+			return i ? that.getSelection().slice(0,i+1).reverse():that.getSelection().reverse();
 		};
 	
 		this.parseData = function(data){
 	        data.forEach(function(d,i,array){
 	                if(array[i+1]){
 	                    d.editSize = d.size - array[i+1].size;
-	                    if (i == 0 ){
-	                        d.timeDiff = 0;
-	                    }
-	                    else{
-	                        d.timeDiff = Math.floor((timeParse.parse(array[i-1].timestamp) - timeParse.parse(d.timestamp) ) /86400000);
-	                    }
-	                    
+	                    //Edit direction positive or negative
 	                    if (d.editSize >= 0){
 	                        d.dir = 'p';
 	                    }
@@ -159,10 +313,16 @@
 	                       d.dir = 'n';
 	                       d.editSize = d.editSize * -1;
 	                    }
+	                    if (i == 0 ){
+	                        d.timeDiff = 0;
+	                    }
+	                    else{
+	                        d.timeDiff = Math.floor((timeParse.parse(array[i-1].timestamp) - timeParse.parse(d.timestamp) ) /86400000);
+	                    }
 	                }
 	                else{
 	                    d.editSize = null;
-	                    d.timeDiff = null;
+	                    d.timeDiff = 0;
 	                }
 	                //console.log(d.editSize);
 	            if (d.parentid == 0){
@@ -178,17 +338,20 @@
 	            }
 	            d.date = timeParse.parse(d.timestamp);
 	            });
-	            
-        		data.svgWidth = data.length*that.barGraphBarwidth < 100 ? 100 : data.length*that.barGraphBarwidth;
+        		data.svgWidth = data.length*(that.barGraphBarwidth+1) < 100 ? 100 : data.length*(that.barGraphBarwidth+1);
         		data.yscale = [0,d3.max(data, function(d) { return d.editSize; })];
         		
    		};
    		
    		this.fixScales = function (){
 	        if(xscale == null){
-				yscale = d3.scale.pow().exponent(.4).domain([0,d3.max(completeRevData, function(d) { return d.editSize; })]).range([2,outerLength]);
-				yscale2 = d3.scale.pow().exponent(.4).domain([0,d3.max(completeRevData, function(d) { return d.editSize; })]).range([2,enlargedLength]);
+				yscale = d3.scale.pow().exponent(.4).domain([0,d3.max(completeRevData, function(d) { return d.editSize; })])
+													.range([1,outerLength]);
+				yscale2 = d3.scale.pow().exponent(.4).domain([0,d3.max(completeRevData, function(d) { return d.editSize; })])
+													.range([3,enlargedLength]);
 				xscale = d3.scale.linear().domain([0,completeRevData.svgWidth]).range([0,completeRevData.svgWidth]);
+				//cleanup pegscale
+				pegScale = d3.scale.linear().domain([0,completeRevData.svgWidth]).range([0,completeRevData.svgWidth]);
 				diffscale = d3.scale.linear().domain([0,d3.max(completeRevData, function(d) { return d.timeDiff; })]).range([0,10]);
 			}
 	        else{
@@ -204,7 +367,7 @@
 	        bars = rect.selectAll('rect').data(data);
 	        bars.enter().append("rect");
 	        bars.attr({
-                        'x':function(d,i){ return i * that.barGraphBarwidth; },
+                        'x':function(d,i){ return i * that.barGraphBarwidth + i; },
                         'y':function(d,i){ return d.dir == 'p' ? outerLength - yscale(d.editSize) : outerLength; },
                         'width':that.barGraphBarwidth,
                         'height':function(d,i){ return yscale(d.editSize); },
@@ -220,48 +383,115 @@
 		        d3.select('#primaryBrush').call(brush);
 			}
 			else{
-		            brush = d3.svg.brush().x(xscale).extent([10, 50]).on("brush", brushmove);
+		            brush = d3.svg.brush().x(xscale).extent([0, 70]).on("brush", brushmove);
 		            var brushg = svgBox.append("g").attr("class", "brush")
 		                                    .attr("id","primaryBrush")
 		                                    .call(brush);
 		            brushg.selectAll("rect").attr("height", 100)
 		                                    .attr("y",0);
+		            //Cleanup
+		            brushg.selectAll(".resize rect").attr("width",2).attr("x",-2);
+		            //remove it from here
+		            $('#outer').scroll();
 		            //Fix it
 		            //brushmove();
-		            temp();
 			}
+			temp();
+			cleanupProgressBar();
+		};
+		this.callPeg = function(){
+			if (peg != null){
+		        peg.x(pegScale);
+		        d3.select('#peg').call(peg);
+			}
+			else{
+		            peg = d3.svg.brush().x(pegScale).extent([0,0]).on("brush", pegMove);
+		            pegHandleContainer = svgEnlargedBox.append("g")
+		                                    .attr("id","peg")
+		                                    .call(peg);
+		            
+		            pegHandleContainer.selectAll(".extent,.resize").remove();
+					
+					pegHandleContainer.select(".background")
+					    .attr("height", enlargedLength * 2);
+					
+					/* Peg */
+					
+					pegHandle = pegHandleContainer.append("g");
+					pegHandle.append("rect")
+					    .attr("class", "peg")
+					    .attr("height",enlargedLength * 2)
+					    .attr("width",2)
+					    .attr("y", 0);
+					pegHandle.append("rect")
+					    .attr("class", "peg")
+					    .attr("height",5)
+					    .attr("width",10)
+					    .attr("y", 0)
+						.attr("x",-4);
+		         }
+		    var lastEditX = 0;
+		    newGraph.filter(function(d){
+		    	lastEditX = d.lastX;
+		    });
+			pegHandleContainer.call(peg.event)
+								.transition() // gratuitous intro!
+    							.duration(750)
+    							.call(peg.extent([lastEditX,lastEditX]))
+    							.call(peg.event);
 		};
 		this.handleScroll = function (){
         	//d3.select('#outer').transition().property('scrollLeft',brush.extent()[0]);
          	$('#outer').scrollLeft(brush.extent()[0]);
    		};
    		this.fixWidth = function (width){
-			d3.select('#enlarged').style('width',width+'px').select('svg').style('width',width).select('line').attr('x2',width);
+			d3.select('#enlarged svg').style('width',width).select('line').attr('x2',width);
 			endLine.attr({'x1':width,'x2':width});
     	};
 		function brushmove(){
 	        var brushExtent = brush.extent();
-	        slid_s = d3.event.target.extent();
+	        var slid_s = d3.event.target.extent();
 	        if(slid_s[1] - slid_s[0] < 100){
 	        
 		        /* the secondary slider */
 		        temp();
 		       
-		        if (brushExtent[1]> completeRevData.length*that.barGraphBarwidth - 50){
-		            that.getData();
+		        if (brushExtent[1]> completeRevData.length*(that.barGraphBarwidth + 1) - 50){
+		       		//userNotification('load');
+		       		that.getData();
 		        }
 	        }
 	        else{
 	            d3.event.target.extent([slid_s[0],slid_s[0]+95]); d3.event.target(d3.select(this));
 	        }
 	        /*Calling Primary Slider callback*/
+	       	cleanupProgressBar();
 			if (that.primarySliderCallback){
 				that.primarySliderCallback();
 			}
     	}
+    	function cleanupProgressBar(){
+    		progressBar.attr('stroke-width',0);
+    	};
+    	this.refreshProgressBar = function (d){
+    		progressBar.attr({'stroke-width':progressBarWidth,
+    						'x1':d.lastX,
+    						'x2':d.lastX+progressBarWidth
+    						});	
+    	};
+    	function highlightSelectedEdit(graph,field,id,color){
+    		graph.filter(function(d){
+    			return d[field] == id;
+				}).style({'fill':color});
+    	};
+    	function cleanupHighlightSelectedEdit(graph,field,id,color,type){
+    		graph.filter(function(d){
+    			return type ? !(d[field] == id) : d[field] == id;
+				}).style({'fill':color});
+    	};
     	function temp(){
     			var brushExtent = brush.extent();
-	    		 	var new_graph = completeRevData.slice(brushExtent[0]/that.barGraphBarwidth,brushExtent[1]/that.barGraphBarwidth );
+	    		 	var new_graph = completeRevData.slice(Math.floor(brushExtent[0]/(that.barGraphBarwidth+1)),Math.ceil(brushExtent[1]/(that.barGraphBarwidth+1)) );
 	    		 	if (new_graph.length){
 				        var diffScaleAbs = 0;
 						var lastX = 0;
@@ -270,50 +500,77 @@
 				        newGraph.enter().append("rect");
 				        newGraph.attr("x",function(d,i){
 				            diffScaleAbs += d.timeDiff*3;
-					    	lastX = diffScaleAbs +  i*that.enlargedBarGraphBarwidth;
-				            return lastX;
+					    	lastX = diffScaleAbs +  i*that.enlargedBarGraphBarwidth + i;
+					    	d.lastX = lastX;
+					    	return lastX;
 						})
 				        .attr("y",function(d,i){
-							return d.dir == 'p' ? enlargedLength - yscale2(d.editSize) : enlargedLength;})
+							return d.dir == 'p' ? enlargedLength - yscale2(d.editSize) : enlargedLength+progressBarWidth;})
 						.attr("width",that.enlargedBarGraphBarwidth)
 						.attr("height",function(d){ return yscale2(d.editSize); })
-						.attr("class",function(d){ return d.dir=='p'?'blue':'red'; })
+						.attr("class",function(d){ return d.dir=='p'?'pointer blue':'pointer red'; })
 						.attr("timeDiff",function(d){ return d.timeDiff; })
-						.attr("title",function(d){ return d.user; })
-						.attr("number",function(d,i){ return i; })
-						.on("mouseover", function(d) {      
-							tooltipDiv.transition().duration(200).style("opacity", .9);
-							bars.filter(function(d){ return d.user == hoverUser; })
-							.style({'fill':'steelblue'});
-						    hoverUser = d.user;
-				            tooltipDiv.html(d.user + "<br/>"  + d.date)  
-				                .style("left", (d3.event.pageX) + "px")     
-				                .style("top", (d3.event.pageY - 28) + "px");    
-				            bars.filter(function(d){
-								return d.user == hoverUser;
-								}).style({'fill':'orange'});
-						})                      
-				        .on("mouseout", function(d) {       
-				            tooltipDiv.transition()        
-				                .duration(500)      
-				                .style("opacity", 0);   
-				        })
-				        .on("click", function(d,i){
-				        	secondrySliderSelection = that.getSelection().slice(0,i+1).reverse();
-							if (that.secondrySliderCallback){
-								that.secondrySliderCallback();
-							}
-				        })
-				       .style({'fill': function(d,i){
-							return d.dir == 'p' ? 'blue':'red' ;}
-						});
-						
-				                                       
+						.attr("data-title",function(d){ return d.user; })
+						.attr("number",function(d,i){ return i; });				        ;
+				                               
 						newGraph.exit().remove();
+						
+						cleanupHighlightSelectedEdit(newGraph,'user',hoverUser,'#929396',1);
+						highlightSelectedEdit(newGraph,'user',hoverUser,'gold');
 						startDate.text(timeParse.parse(new_graph[0].timestamp).toDateString().slice(4));
-						endDate.text(timeParse.parse(new_graph[new_graph.length-1].timestamp).toDateString().slice(4)).attr({'x':lastX-50});
-						that.fixWidth(lastX);
+						endDate.text(timeParse.parse(new_graph[new_graph.length-1].timestamp).toDateString().slice(4)).attr({'x':lastX-47});
+						enlargedBarGraphSvgWidth = lastX + that.enlargedBarGraphBarwidth;
+						that.fixWidth(enlargedBarGraphSvgWidth);
+						pegScale.domain([0,enlargedBarGraphSvgWidth]).range([0,enlargedBarGraphSvgWidth]);
+						that.callPeg();
+						
 				}
     	}
+    	var pegMove = function(){
+			console.log('Peg moved');
+			var relaxedSelectedBar;
+			//temp fix, to bring the correct edit into focus when the primary brush is moved
+			var value = peg.extent()[0]+1;
+			  if (d3.event.sourceEvent) { // not a programmatic event
+			    value = pegScale.invert(d3.mouse(this)[0]);
+			    peg.extent([value, value]);
+			    that.pegMoved = true;
+			    
+			     //Pausing if the player is playing
+			  if (that.primarySliderCallback){
+				that.primarySliderCallback();
+				cleanupProgressBar();
+				}
+
+			  }
+				selectedBar = newGraph.filter(function(d,i){
+					if (d.lastX < value && value < d.lastX + that.enlargedBarGraphBarwidth){
+							cleanupHighlightSelectedEdit(bars,'user',hoverUser,'gray',0);
+							cleanupHighlightSelectedEdit(newGraph,'user',hoverUser,'#929396',0);
+						    hoverUser = d.user;    
+							highlightSelectedEdit(bars,'user',hoverUser,'gold');	
+							highlightSelectedEdit(newGraph,'user',hoverUser,'gold');
+							
+							var revInfo = {
+								'revid': d.revid,
+								'user': d.user,
+								'timestamp': d.timestamp.slice(0,10),
+								'minor': d.minor ? 'M' : null
+							};
+							infoBox(revInfo);
+					}
+					if (d.lastX < value){
+						relaxedSelectedBar = i;
+					}
+					return d.lastX < value && value < d.lastX + that.enlargedBarGraphBarwidth;
+				});
+				
+				//Getting the selected edits 
+				that.selectedEdits = that.getSecondrySliderSelection(relaxedSelectedBar);
+				
+				
+				console.log(selectedBar);
+			  pegHandle.attr("transform","translate("+pegScale(value)+")");
+			     	}; 
     	return this;
     }
