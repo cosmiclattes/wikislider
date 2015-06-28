@@ -121,6 +121,7 @@ var infoBox = function (revInfo){
 				titles:'',
 		        rvprop:'user|timestamp|flags|ids|size',
 		        rvlimit:'max',
+		        rawcontinue: ''
 	    	};
 		
 		this.height = options.height;
@@ -276,6 +277,7 @@ var infoBox = function (revInfo){
 				titles:'',
 		        rvprop:'user|timestamp|flags|ids|size',
 		        rvlimit:'max',
+		        rawcontinue:''
 	    	};
 		};
 		//Cleanup big time
